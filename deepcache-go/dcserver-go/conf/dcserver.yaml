@@ -1,6 +1,6 @@
 # dcserver config
 name: "" # optional
-node: "127.0.0.1"
+node: "10.0.16.20"
 uuid: "" # optional
 
 logpath: ""
@@ -20,8 +20,7 @@ debug: false
 enableadmin: false
 
 # data path config
-dcserver_data_path: "/path/to/cifar10/or/imagenet/train"
-dcserver_data_path: "/data/cifar10/train"
+dcserver_data_path: "/home/hh/data/cifar10/train"
 
 # cache
 cache_ratio: 0.2    # total cache ratio of original dataset
@@ -33,4 +32,5 @@ async_building_task: 300 # building task num
 package_design: true     # whether open dynamic packaging
 loading_cache_size: 450  # loading cache size
 
-etcd_nodes: "ip1,ip2"
+# etcd_nodes: "ip1,ip2"
+etcd_nodes: "10.0.16.20"

@@ -393,12 +393,18 @@ def train(train_loader, model, criterion, optimizer, epoch, args, selective_back
     global last_remote_peer_hit, start_count_iter
     batch_time = AverageMeter('Time', ':6.6f')
     data_time = AverageMeter('Data', ':6.6f')
+    transfer_time = AverageMeter('Transfer', ':6.6f')
+    forward_time = AverageMeter('Forward', ':6.6f')
+    loss_time = AverageMeter('LossCalc', ':6.6f')
+    backward_time = AverageMeter('Backward', ':6.6f')
+    optimizer_time = AverageMeter('Optimizer', ':6.6f')
+    other_time = AverageMeter('Other', ':6.6f')
     losses = AverageMeter('Loss', ':.4e')
     top1 = AverageMeter('Acc@1', ':6.2f')
     top5 = AverageMeter('Acc@5', ':6.2f')
     progress = ProgressMeter(
         len(train_loader),
-        [batch_time, data_time, losses, top1, top5],
+        [batch_time, data_time, transfer_time, forward_time, loss_time, backward_time, optimizer_time, other_time, losses, top1, top5],
         prefix="Epoch: [{}]".format(epoch))
 
     # switch to train mode
@@ -415,21 +421,39 @@ def train(train_loader, model, criterion, optimizer, epoch, args, selective_back
         if i>start_count_iter:
             data_time.update(time.time() - end)
 
+        # 测量数据转移到GPU的时间
+        t0 = time.time()
         images = images.cuda(args.gpu)
         target = target.cuda(args.gpu)
+        if i>start_count_iter:
+            transfer_time.update(time.time() - t0)
 
         # print('target:',target, 'imgidx:', imgidx)
 
         # compute output and loss for current batch
+        t1 = time.time()
         if args.sbp:
             loss = torch.Tensor(selective_backprop.reuse_loss(imgidx))
+            if i>start_count_iter:
+                forward_time.update(time.time() - t1)
+                loss_time.update(0)  # SBP模式下loss是重用的，不计入loss计算时间
         else:
+            # 测量前向传播时间
             output = model(images)
+            t2 = time.time()
+            if i>start_count_iter:
+                forward_time.update(t2 - t1)
+            
+            # 测量损失计算时间
             loss = criterion(output, target)
+            t3 = time.time()
+            if i>start_count_iter:
+                loss_time.update(t3 - t2)
 
         # print([loss[i].item() for i in range(args.batch_size)],[i.item() for i in imgidx])
 
-        #
+        # 测量其他操作时间（更新缓存、计算准确率等）
+        t4 = time.time()
         if args.cache_type == "isa" or args.cache_type == "isa_lru" or args.sbp:
             kvlst = dict(zip([str(j.item()) for j in imgidx], [
                          loss[j].item() for j in range(len(imgidx))]))
@@ -444,13 +468,21 @@ def train(train_loader, model, criterion, optimizer, epoch, args, selective_back
             losses.update(loss.mean().item(), images.size(0))
             top1.update(acc1[0], images.size(0))
             top5.update(acc5[0], images.size(0))
+        
+        t5 = time.time()
+        if i>start_count_iter:
+            other_time.update(t5 - t4)
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
+        t6 = time.time()
         if args.sbp:
             selective_backprop.selective_back_propagation(loss, images, target, imgidx, beta=args.beta,
                                                           cur_epoch=train_loader.cur_epoch, reuse_factor=args.reuse_factor,
                                                           is_last_batch=(len(imgidx) != args.batch_size))
+            t7 = time.time()
+            if i>start_count_iter:
+                backward_time.update(t7 - t6)
         else:
             # gradient will be sync in loss.backward()
             loss = loss.mean()
@@ -459,9 +491,19 @@ def train(train_loader, model, criterion, optimizer, epoch, args, selective_back
             #     with amp.scale_loss(loss, optimizer) as scaled_loss:
             #         scaled_loss.backward()
             # else:
+            # 测量反向传播时间
             loss.backward()
+            t7 = time.time()
+            if i>start_count_iter:
+                backward_time.update(t7 - t6)
         # selective_backprop.selective_back_propagation(loss, images, target)
+        
+        # 测量优化器更新参数时间
+        t8 = time.time()
         optimizer.step()
+        t9 = time.time()
+        if i>start_count_iter:
+            optimizer_time.update(t9 - t8)
 
         # measure elapsed time
         if i>start_count_iter:
@@ -473,6 +515,23 @@ def train(train_loader, model, criterion, optimizer, epoch, args, selective_back
         end = time.time()
 
     print(f'==> local cache hit rate for current epoch: {nhit}/{ntotal}={round(nhit/ntotal,4)*100}%')
+    
+    # 输出各阶段时间统计
+    print('\n========== 训练时间开销分析 ==========')
+    total_time = batch_time.avg
+    if total_time > 0:
+        print(f'总batch时间: {total_time:.6f}s')
+        print(f'  数据加载时间: {data_time.avg:.6f}s ({data_time.avg/total_time*100:.2f}%)')
+        print(f'  数据转移时间: {transfer_time.avg:.6f}s ({transfer_time.avg/total_time*100:.2f}%)')
+        print(f'  前向传播时间: {forward_time.avg:.6f}s ({forward_time.avg/total_time*100:.2f}%)')
+        print(f'  损失计算时间: {loss_time.avg:.6f}s ({loss_time.avg/total_time*100:.2f}%)')
+        print(f'  其他操作时间: {other_time.avg:.6f}s ({other_time.avg/total_time*100:.2f}%)')
+        print(f'  反向传播时间: {backward_time.avg:.6f}s ({backward_time.avg/total_time*100:.2f}%)')
+        print(f'  优化器更新时间: {optimizer_time.avg:.6f}s ({optimizer_time.avg/total_time*100:.2f}%)')
+    else:
+        print('总batch时间: 0.000000s (无有效数据)')
+    print('=====================================\n')
+    
     # print remote peer hit times
     if args.distributed:
         dist.barrier()

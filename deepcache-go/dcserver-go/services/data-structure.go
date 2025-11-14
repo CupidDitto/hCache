@@ -50,6 +50,9 @@ func init_isa_related_struct(dc *deepcachemodel) *isa_related_struct {
 	return &isa_rs
 }
 
+type semantic_related_struct struct {
+}
+
 type heapNode struct {
 	Imgidx int64 // imgidx
 }
@@ -57,14 +60,24 @@ type heapNode struct {
 type indexheap struct {
 	nodes             []heapNode
 	Imgidx2importance *map[int64]float64
+	Imgidx2frequency  *map[int64]int64
 }
 
 // functions necessary to build indexheap
 // sort interface
-func (h indexheap) Len() int { return int(len(h.nodes)) } // warning: must be int rather than int64
+func (h indexheap) Len() int { return len(h.nodes) } // no need for int64 here
 func (h indexheap) Less(i, j int) bool {
-	return (*h.Imgidx2importance)[h.nodes[i].Imgidx] < (*h.Imgidx2importance)[h.nodes[j].Imgidx]
+	// First compare importance
+	if (*h.Imgidx2importance)[h.nodes[i].Imgidx] < (*h.Imgidx2importance)[h.nodes[j].Imgidx] {
+		return true
+	}
+	if (*h.Imgidx2importance)[h.nodes[i].Imgidx] > (*h.Imgidx2importance)[h.nodes[j].Imgidx] {
+		return false
+	}
+	// If importance is the same, compare frequency
+	return (*h.Imgidx2frequency)[h.nodes[i].Imgidx] < (*h.Imgidx2frequency)[h.nodes[j].Imgidx]
 }
+
 func (h indexheap) Swap(i, j int) {
 	h.nodes[i], h.nodes[j] = h.nodes[j], h.nodes[i]
 }

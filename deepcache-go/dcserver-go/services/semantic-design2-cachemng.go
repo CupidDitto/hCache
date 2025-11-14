@@ -20,9 +20,6 @@ type similar_cache struct {
 	cache map[int64]*Node       // cache map
 	freq  map[int64]*DoubleList // freq map
 
-	neighbor_to_key_map map[int64]int64 `json:"-"` // neighbor to key map
-	key_to_neighbor_map map[int64]int64 `json:"-"` // key to neighbor map
-
 	Cache_size   int64 `json:"cache_size"`   // capacity
 	Full         bool  `json:"full"`         // cache is full
 	Cache_nitems int64 `json:"cache_nitems"` // cache n items
